@@ -64,16 +64,21 @@ setup(name='sos',
                    """ information from a system."""),
       author='Bryn M. Reeves',
       author_email='bmr@redhat.com',
+      maintainer='Jake Hunsaker',
+      maintainer_email='jhunsake@redhat.com',
       url='https://github.com/sosreport/sos',
       license="GPLv2+",
-      scripts=['sosreport'],
+      scripts=['bin/sos', 'bin/sosreport'],
       data_files=[
-        ('share/man/man1', ['man/en/sosreport.1']),
+        ('share/man/man1', ['man/en/sosreport.1', 'man/en/sos-report.1',
+                            'man/en/sos.1', 'man/en/sos-collect.1',
+                            'man/en/sos-collector.1']),
         ('share/man/man5', ['man/en/sos.conf.5']),
         ],
-      packages=['sos', 'sos.plugins', 'sos.policies'],
+      packages=['sos', 'sos.policies', 'sos.report', 'sos.report.plugins',
+                'sos.collector', 'sos.collector.clusters'],
       cmdclass={'build': BuildData, 'install_data': InstallData},
-      requires=['six', 'futures'],
+      requires=['pexpect']
      )
 
 

@@ -14,13 +14,9 @@ import tarfile
 import shutil
 import logging
 import codecs
-import sys
 import errno
 import stat
 from threading import Lock
-
-# required for compression callout (FIXME: move to policy?)
-from subprocess import Popen
 
 from sos.utilities import sos_get_command_output, is_executable
 
@@ -28,11 +24,6 @@ try:
     import selinux
 except ImportError:
     pass
-
-# PYCOMPAT
-import six
-if six.PY3:
-    long = int
 
 P_FILE = "file"
 P_LINK = "link"
@@ -139,12 +130,13 @@ class FileCacheArchive(Archive):
     _archive_root = ""
     _archive_name = ""
 
-    def __init__(self, name, tmpdir, policy, threads, enc_opts):
+    def __init__(self, name, tmpdir, policy, threads, enc_opts, sysroot):
         self._name = name
         self._tmp_dir = tmpdir
         self._policy = policy
         self._threads = threads
         self.enc_opts = enc_opts
+        self.sysroot = sysroot or '/'
         self._archive_root = os.path.join(tmpdir, name)
         with self._path_lock:
             os.makedirs(self._archive_root, 0o700)
@@ -155,6 +147,13 @@ class FileCacheArchive(Archive):
         if os.path.isabs(name):
             name = name.lstrip(os.sep)
         return (os.path.join(self._archive_root, name))
+
+    def join_sysroot(self, path):
+        if path.startswith(self.sysroot):
+            return path
+        if path[0] == os.sep:
+            path = path[1:]
+        return os.path.join(self.sysroot, path)
 
     def _make_leading_paths(self, src, mode=0o700):
         """Create leading path components
@@ -191,7 +190,8 @@ class FileCacheArchive(Archive):
             src_dir = src
         else:
             # Host file path
-            src_dir = src if os.path.isdir(src) else os.path.split(src)[0]
+            src_dir = (src if os.path.isdir(self.join_sysroot(src))
+                       else os.path.split(src)[0])
 
         # Build a list of path components in root-to-leaf order.
         path = src_dir
@@ -231,6 +231,11 @@ class FileCacheArchive(Archive):
                     # Recursively create leading components of target
                     dest = self._make_leading_paths(target_src, mode=mode)
                     dest = os.path.normpath(dest)
+
+                    # In case symlink target is an absolute path, make it
+                    # relative to the directory with symlink source
+                    if os.path.isabs(target):
+                        target = os.path.relpath(target, target_dir)
 
                     self.log_debug("Making symlink '%s' -> '%s'" %
                                    (abs_path, target))
@@ -338,6 +343,9 @@ class FileCacheArchive(Archive):
                         pass
                     else:
                         self.log_info("caught '%s' copying '%s'" % (e, src))
+                except OSError as e:
+                    self.log_info("File not collected: '%s'" % e)
+
                 # copy file attributes, skip SELinux xattrs for /sys and /proc
                 try:
                     stat = os.stat(src)
@@ -593,86 +601,15 @@ class FileCacheArchive(Archive):
         raise Exception(msg)
 
 
-# Compatibility version of the tarfile.TarFile class. This exists to allow
-# compatibility with PY2 runtimes that lack the 'filter' parameter to the
-# TarFile.add() method. The wrapper class is used on python2.6 and earlier
-# only; all later versions include 'filter' and the native TarFile class is
-# used directly.
-class _TarFile(tarfile.TarFile):
-
-    # Taken from the python 2.7.5 tarfile.py
-    def add(self, name, arcname=None, recursive=True,
-            exclude=None, filter=None):
-        """Add the file `name' to the archive. `name' may be any type of file
-           (directory, fifo, symbolic link, etc.). If given, `arcname'
-           specifies an alternative name for the file in the archive.
-           Directories are added recursively by default. This can be avoided by
-           setting `recursive' to False. `exclude' is a function that should
-           return True for each filename to be excluded. `filter' is a function
-           that expects a TarInfo object argument and returns the changed
-           TarInfo object, if it returns None the TarInfo object will be
-           excluded from the archive.
-        """
-        self._check("aw")
-
-        if arcname is None:
-            arcname = name
-
-        # Exclude pathnames.
-        if exclude is not None:
-            import warnings
-            warnings.warn("use the filter argument instead",
-                          DeprecationWarning, 2)
-            if exclude(name):
-                self._dbg(2, "tarfile: Excluded %r" % name)
-                return
-
-        # Skip if somebody tries to archive the archive...
-        if self.name is not None and os.path.abspath(name) == self.name:
-            self._dbg(2, "tarfile: Skipped %r" % name)
-            return
-
-        self._dbg(1, name)
-
-        # Create a TarInfo object from the file.
-        tarinfo = self.gettarinfo(name, arcname)
-
-        if tarinfo is None:
-            self._dbg(1, "tarfile: Unsupported type %r" % name)
-            return
-
-        # Change or exclude the TarInfo object.
-        if filter is not None:
-            tarinfo = filter(tarinfo)
-            if tarinfo is None:
-                self._dbg(2, "tarfile: Excluded %r" % name)
-                return
-
-        # Append the tar header and data to the archive.
-        if tarinfo.isreg():
-            with tarfile.bltn_open(name, "rb") as f:
-                self.addfile(tarinfo, f)
-
-        elif tarinfo.isdir():
-            self.addfile(tarinfo)
-            if recursive:
-                for f in os.listdir(name):
-                    self.add(os.path.join(name, f), os.path.join(arcname, f),
-                             recursive, exclude, filter)
-
-        else:
-            self.addfile(tarinfo)
-
-
 class TarFileArchive(FileCacheArchive):
     """ archive class using python TarFile to create tar archives"""
 
     method = None
     _with_selinux_context = False
 
-    def __init__(self, name, tmpdir, policy, threads, enc_opts):
+    def __init__(self, name, tmpdir, policy, threads, enc_opts, sysroot):
         super(TarFileArchive, self).__init__(name, tmpdir, policy, threads,
-                                             enc_opts)
+                                             enc_opts, sysroot)
         self._suffix = "tar"
         self._archive_name = os.path.join(tmpdir, self.name())
 
@@ -720,11 +657,7 @@ class TarFileArchive(FileCacheArchive):
         return super(TarFileArchive, self).name_max()
 
     def _build_archive(self):
-        # python2.6 TarFile lacks the filter parameter
-        if not six.PY3 and sys.version_info[1] < 7:
-            tar = _TarFile.open(self._archive_name, mode="w")
-        else:
-            tar = tarfile.open(self._archive_name, mode="w")
+        tar = tarfile.open(self._archive_name, mode="w")
         # we need to pass the absolute path to the archive root but we
         # want the names used in the archive to be relative.
         tar.add(self._archive_root, arcname=os.path.split(self._name)[1],

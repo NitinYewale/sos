@@ -1,5 +1,10 @@
-#!/usr/bin/env python
-
+# This file is part of the sos project: https://github.com/sosreport/sos
+#
+# This copyrighted material is made available to anyone wishing to use,
+# modify, copy, or redistribute it subject to the terms and conditions of
+# version 2 of the GNU General Public License.
+#
+# See the LICENSE file in the source distribution for further information.
 import unittest
 import os
 import tarfile
@@ -11,16 +16,13 @@ from sos.archive import TarFileArchive
 from sos.utilities import tail
 from sos.policies import Policy
 
-# PYCOMPAT
-import six
-
 
 class TarFileArchiveTest(unittest.TestCase):
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         enc = {'encrypt': False}
-        self.tf = TarFileArchive('test', self.tmpdir, Policy(), 1, enc)
+        self.tf = TarFileArchive('test', self.tmpdir, Policy(), 1, enc, '/')
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir)
@@ -51,7 +53,7 @@ class TarFileArchiveTest(unittest.TestCase):
     def test_add_string_from_file(self):
         self.copy_strings = []
         testfile = tempfile.NamedTemporaryFile(dir=self.tmpdir, delete=False)
-        testfile.write(six.b("*" * 1000))
+        testfile.write(b"*" * 1000)
         testfile.flush()
         testfile.close()
 
@@ -112,6 +114,7 @@ class TarFileArchiveTest(unittest.TestCase):
 
     def test_compress(self):
         self.tf.finalize("auto")
+
 
 if __name__ == "__main__":
     unittest.main()

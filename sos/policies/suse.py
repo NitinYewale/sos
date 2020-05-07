@@ -7,12 +7,10 @@
 #
 # See the LICENSE file in the source distribution for further information.
 
-# This enables the use of with syntax in python 2.5 (e.g. jython)
-from __future__ import print_function
 import os
 import sys
 
-from sos.plugins import RedHatPlugin, SuSEPlugin
+from sos.report.plugins import RedHatPlugin, SuSEPlugin
 from sos.policies import LinuxPolicy, PackageManager
 from sos import _sos as _
 
@@ -23,11 +21,14 @@ class SuSEPolicy(LinuxPolicy):
     vendor_url = "https://www.suse.com/"
     _tmp_dir = "/var/tmp"
 
-    def __init__(self, sysroot=None):
-        super(SuSEPolicy, self).__init__()
+    def __init__(self, sysroot=None, init=None, probe_runtime=True,
+                 remote_exec=None):
+        super(SuSEPolicy, self).__init__(sysroot=sysroot, init=init,
+                                         probe_runtime=probe_runtime)
         self.ticket_number = ""
         self.package_manager = PackageManager(
-            'rpm -qa --queryformat "%{NAME}|%{VERSION}\\n"')
+            'rpm -qa --queryformat "%{NAME}|%{VERSION}\\n"',
+            remote_exec=remote_exec)
         self.valid_subclasses = [SuSEPlugin, RedHatPlugin]
 
         pkgs = self.package_manager.all_pkgs()
@@ -43,7 +44,7 @@ class SuSEPolicy(LinuxPolicy):
         self.set_exec_path()
 
     @classmethod
-    def check(cls):
+    def check(cls, remote=''):
         """This method checks to see if we are running on SuSE. It must be
         overriden by concrete subclasses to return True when running on an
         OpenSuSE, SLES or other Suse distribution and False otherwise."""
@@ -97,11 +98,16 @@ No changes will be made to system configuration.
 %(vendor_text)s
 """)
 
-    def __init__(self, sysroot=None):
-        super(OpenSuSEPolicy, self).__init__(sysroot=sysroot)
+    def __init__(self, sysroot=None, init=None, probe_runtime=True):
+        super(OpenSuSEPolicy, self).__init__(sysroot=sysroot, init=init,
+                                             probe_runtime=probe_runtime)
 
     @classmethod
-    def check(cls):
+    def check(cls, remote):
         """This method checks to see if we are running on SuSE.
         """
+
+        if remote:
+            return cls.distro in remote
+
         return (os.path.isfile('/etc/SuSE-release'))
